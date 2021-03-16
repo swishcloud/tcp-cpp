@@ -1,0 +1,29 @@
+set(EXPORT_NAME ${CMAKE_PROJECT_NAME}-TARGETS)
+
+file(GLOB_RECURSE SOURCES LIST_DIRECTORIES true *.cpp)
+add_library(${CMAKE_PROJECT_NAME} ${SOURCES})
+target_link_libraries( ${CMAKE_PROJECT_NAME} common::common Boost::date_time -lpthread -lstdc++fs)
+
+install(TARGETS ${CMAKE_PROJECT_NAME} EXPORT ${EXPORT_NAME}
+  LIBRARY DESTINATION lib/${CMAKE_PROJECT_NAME}
+  ARCHIVE DESTINATION lib/${CMAKE_PROJECT_NAME}
+  RUNTIME DESTINATION lib/${CMAKE_PROJECT_NAME}
+  INCLUDES DESTINATION lib/${CMAKE_PROJECT_NAME}
+)
+
+install(
+  FILES
+    "internal.h"
+    "tcp.h"
+  DESTINATION
+    include/${CMAKE_PROJECT_NAME}
+)
+
+install(
+  FILES
+  "../cmake/${CMAKE_PROJECT_NAME}Config.cmake"
+  DESTINATION
+  lib/cmake/${CMAKE_PROJECT_NAME}
+)
+
+install(EXPORT ${EXPORT_NAME} NAMESPACE ThirdPartyLibrary:: DESTINATION lib/cmake/${CMAKE_PROJECT_NAME})
