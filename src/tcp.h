@@ -4,6 +4,8 @@
 #include "internal.h"
 #include <boost/asio.hpp>
 #include <common.h>
+#include <nlohmann/json.hpp>
+using namespace nlohmann;
 using boost::asio::ip::tcp;
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -79,5 +81,62 @@ namespace GLOBAL_NAMESPACE_NAME
         tcp_client();
         ~tcp_client();
     };
+
+    struct message_header
+    {
+    private:
+        std::string str_v;
+        size_t int_v;
+        int t;
+
+    public:
+        std::string name;
+        message_header(std::string name, std::string v);
+        message_header(std::string name, size_t v);
+        void fill_json(json &j);
+        template <class T>
+        T getValue() const
+        {
+            if (std::is_integral<T>::value)
+            {
+                return static_cast<T>(*(T *)(&this->int_v));
+            }
+            else
+            {
+                return static_cast<T>(*(T *)(&this->str_v));
+            }
+        }
+    };
+    class message
+    {
+    private:
+        std::vector<message_header> headers{};
+
+    public:
+        //message();
+        //message(message &&msg);
+        int msg_type{0};
+        size_t body_size{0};
+        char *to_json() const;
+        operator bool() const;
+        static message parse(std::string json);
+        void addHeader(message_header value);
+
+        template <typename T>
+        T getHeaderValue(std::string name) const
+        {
+            for (auto &h : this->headers)
+            {
+                if (strcmp(h.name.c_str(), name.c_str()) == 0)
+                {
+                    return h.getValue<T>();
+                }
+            }
+            return T();
+        }
+    };
+
+    void send_message(XTCP::tcp_session *session, message &msg, std::function<void(bool success)> on_sent);
+    void read_message(XTCP::tcp_session *session, message &msg, std::function<void(bool success, message &msg)> on_read);
 };
 #endif

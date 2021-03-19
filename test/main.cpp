@@ -63,6 +63,48 @@ void run_client_thread()
         }
     }};
 }
+void read_msg(XTCP::tcp_session *session)
+{
+    XTCP::message msg;
+    XTCP::read_message(session, msg, [session](bool success, XTCP::message &msg) {
+        read_msg(session);
+        common::print_info(common::string_format("client message:%s", msg.to_json()));
+    });
+}
+void run_client_thread2()
+{
+    XTCP::tcp_client *client = new XTCP::tcp_client{};
+    client->on_connect_success = [](XTCP::tcp_client *client) {
+        new std::thread{[client]() {
+            int i=1;
+        while (1)
+        {
+            XTCP::message msg;
+            msg.body_size=i++;
+            XTCP::send_message(&client->session, msg, NULL);
+           // std::this_thread::sleep_for(std::chrono::seconds{10});
+        } }};
+    };
+    //client.on_connect_fail = on_connect_fail;
+    client->start("127.0.0.1", "8080");
+}
+void test_msg()
+{
+    std::thread server_th = std::thread([]() {
+        XTCP::tcp_server tcp_server(8080);
+        tcp_server.on_accepted = [](XTCP::tcp_session *session, XTCP::tcp_server *server) {
+            common::print_debug("accepted a connection");
+            read_msg(session);
+        };
+        tcp_server.listen();
+    });
+    run_client_thread2();
+    run_client_thread2();
+    run_client_thread2();
+    run_client_thread2();
+    run_client_thread2();
+    common::pause();
+}
 int main(int argc, char *argv[])
 {
     if (std::string(argv[1]) == "server")
@@ -94,6 +136,10 @@ int main(int argc, char *argv[])
         for (int i = 0; i < 100; i++)
             run_client_thread();
         common::pause();
+    }
+    else if (std::string(argv[1]) == "test_msg")
+    {
+        test_msg();
     }
     else
     {
