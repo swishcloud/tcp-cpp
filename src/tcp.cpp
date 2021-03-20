@@ -395,6 +395,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 {
                     common::print_debug(common::string_format("error reading message:%s", e.what()));
                     on_read(e.what(), msg);
+                    return;
                 }
 
                 if (error || completed)
