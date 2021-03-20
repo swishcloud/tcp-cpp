@@ -6,6 +6,11 @@ set(TEST_TARGET_NAME ${CMAKE_PROJECT_NAME}_TEST)
 enable_testing()
 include_directories(src)
 find_package(common REQUIRED)
+<<<<<<< HEAD
 find_package(Boost REQUIRED)
+=======
+find_package(Boost REQUIRED COMPONENTS date_time )
+find_package(nlohmann_json 3.2.0 REQUIRED)
+>>>>>>> f9e0ee31cf380c3c1ea72151bd9a1b5c8e1e5cb3
 add_subdirectory(src)
 add_subdirectory(test)

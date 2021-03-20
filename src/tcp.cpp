@@ -226,4 +226,182 @@ namespace GLOBAL_NAMESPACE_NAME
             }
         });
     }
+    void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(bool success, message &msg)> on_read);
+    void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(bool success, message &msg)> on_read);
+
+    char *message::to_json() const
+    {
+        nlohmann::json j;
+        for (auto header : this->headers)
+        {
+            header.fill_json(j["Header"]);
+        }
+        j["MsgType"] = this->msg_type;
+        j["BodySize"] = this->body_size;
+        std::string json_str = j.dump();
+        return common::strcpy(json_str.c_str());
+    }
+    message::operator bool() const
+    {
+        return this->msg_type > 0;
+    }
+    message message::parse(std::string json)
+    {
+        nlohmann::json j = nlohmann::json::parse(json);
+        message msg;
+        msg.msg_type = j["MsgType"].get<int>();
+        msg.body_size = j["BodySize"].get<long>();
+        for (auto &header : j["Header"].items())
+        {
+            nlohmann::json val = header.value();
+            if (val.is_number())
+            {
+                msg.addHeader({header.key(), static_cast<size_t>(val)});
+            }
+            else
+            {
+                msg.addHeader({header.key(), static_cast<std::string>(val)});
+            }
+        }
+        return msg;
+    }
+    void message::addHeader(message_header value)
+    {
+        headers.push_back(value);
+    }
+    message_header::message_header(std::string name, std::string v)
+    {
+        this->name = name;
+        t = 0;
+        this->str_v = v;
+    }
+    message_header::message_header(std::string name, size_t v)
+    {
+        this->name = name;
+        t = 1;
+        this->int_v = v;
+    }
+    void message_header::fill_json(json &j)
+    {
+        if (this->t == 0)
+            j[this->name] = this->str_v;
+        else if (this->t == 1)
+            j[this->name] = this->int_v;
+    }
+    void send_message(XTCP::tcp_session *session, message &msg, std::function<void(bool success)> on_sent)
+    {
+        auto json = std::unique_ptr<char[]>{msg.to_json()};
+        int json_len = strlen(json.get());
+        std::string json_len_str = common::string_format("%x", json_len);
+        int buf_len = json_len_str.size() + 1 + json_len;
+        std::shared_ptr<char[]> buf{new char[buf_len]};
+        char *dest = buf.get();
+        memcpy(dest, json_len_str.c_str(), json_len_str.size());
+        dest += json_len_str.size();
+        memcpy(dest++, "\0", 1);
+        memcpy(dest, json.get(), json_len);
+
+        std::promise<std::string> promise;
+        session->write(
+            buf.get(), buf_len, [buf, on_sent, &promise](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+                if (error)
+                {
+                    session->close();
+                }
+                if ((completed || error))
+                {
+                    if (on_sent)
+                        on_sent(!error);
+                    else
+                        promise.set_value(error ? error : "");
+                }
+            },
+            NULL);
+        if (!on_sent)
+        {
+            auto err = promise.get_future().get();
+            if (!err.empty())
+            {
+                throw common::exception(err);
+            }
+        }
+    }
+    void read_message(XTCP::tcp_session *session, message &msg, std::function<void(bool success, message &msg)> on_read)
+    {
+        std::shared_ptr<std::stringstream> size_ss{new std::stringstream{}};
+        *size_ss << std::hex;
+        std::shared_ptr<std::promise<message>> promise{new std::promise<message>{}};
+        _receive_size(session, size_ss, [on_read, session, promise](bool success, message &msg) {
+            promise->set_value(msg);
+            if (!success)
+            {
+                session->close();
+            }
+            if (on_read)
+            {
+                on_read(success, msg);
+            }
+        });
+        if (!on_read)
+        {
+            msg = promise->get_future().get();
+        }
+    }
+    void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(bool success, message &msg)> on_read)
+    {
+        tcp_session->read(
+            1, [on_read, size_ss](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+                if (error)
+                {
+                    message msg;
+                    on_read(false, msg);
+                    return;
+                }
+                *size_ss << session->buffer.get()[0];
+                if (session->buffer.get()[0] == '\0')
+                {
+                    int size;
+                    *size_ss >> size;
+                    common::print_debug(common::string_format("read message SIZE:%d", size));
+                    std::shared_ptr<std::stringstream> msg_ss{new std::stringstream{}};
+                    _receive_message(session, msg_ss, size, on_read);
+                    return;
+                }
+                else
+                {
+                    assert(completed); //just one byte.
+                    _receive_size(session, size_ss, on_read);
+                }
+            },
+            NULL);
+    }
+    void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(bool success, message &msg)> on_read)
+    {
+        tcp_session->read(
+            size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+                std::unique_ptr<char[]> msg_content = std::unique_ptr<char[]>{common::strcpy(session->buffer.get(), read_size)};
+                *msg_ss << msg_content.get();
+
+                if (completed)
+                {
+                    common::print_debug(common::string_format("read message:%s", msg_ss->str().c_str()));
+                }
+                message msg = completed ? message::parse(msg_content.get()) : message{};
+                try
+                {
+                    msg = message::parse(msg_content.get());
+                }
+                catch (const std::exception &e)
+                {
+                    common::print_debug(common::string_format("error reading message:%s", e.what()));
+                    on_read(e.what(), msg);
+                }
+
+                if (error || completed)
+                {
+                    on_read(!error, msg);
+                }
+            },
+            NULL);
+    }
 };
