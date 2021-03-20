@@ -386,7 +386,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 {
                     common::print_debug(common::string_format("read message:%s", msg_ss->str().c_str()));
                 }
-                message msg = completed ? message::parse(msg_content.get()) : message{};
+                message msg;
                 try
                 {
                     msg = message::parse(msg_content.get());
