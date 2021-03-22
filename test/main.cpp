@@ -66,9 +66,20 @@ void run_client_thread()
 void read_msg(XTCP::tcp_session *session)
 {
     XTCP::message msg;
+    common::print_info(common::string_format("reading client message"));
     XTCP::read_message(session, msg, [session](bool success, XTCP::message &msg) {
-        read_msg(session);
-        common::print_info(common::string_format("client message:%s", msg.to_json()));
+        common::print_info(common::string_format("reading client message %s", success ? "ok" : "failed"));
+        if (success)
+        {
+            common::print_info(common::string_format("client message:%s", msg.to_json()));
+            XTCP::send_message(session, msg, [session](bool success) {
+                common::print_debug(common::string_format("Server send message %s", success ? "ok" : "failed"));
+                if (success)
+                {
+                    read_msg(session);
+                }
+            });
+        }
     });
 }
 void run_client_thread2()
@@ -83,6 +94,8 @@ void run_client_thread2()
             msg.body_size=i++;
             XTCP::send_message(&client->session, msg, NULL);
            // std::this_thread::sleep_for(std::chrono::seconds{10});
+           //client->session.close();
+           return;
         } }};
     };
     //client.on_connect_fail = on_connect_fail;

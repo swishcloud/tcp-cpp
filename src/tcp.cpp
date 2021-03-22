@@ -49,7 +49,7 @@ namespace GLOBAL_NAMESPACE_NAME
 
                     time(&timer);
                     double seconds = difftime(timer, session->last_read_timer);
-                    if (session->read_size > 0 && seconds > 1 * 60 * 3)
+                    if (session->read_size > 0 && seconds > 20)
                     {
                         //remove this session
                         this->remove_session(i--);
@@ -81,8 +81,14 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_server::remove_session(int index)
     {
         std::lock_guard<std::mutex> guard(sessions_mtx);
+        if (!this->sessions[index]->closed)
+        {
+            common::print_info("session read timeout, closing...");
+            this->sessions[index]->close();
+        }
         delete this->sessions[index];
         this->sessions.erase(this->sessions.begin() + index);
+        common::print_info("server removed a session");
     }
     //begin tcp_client
     void tcp_client::start(std::string server_ip, std::string server_port)
@@ -143,11 +149,11 @@ namespace GLOBAL_NAMESPACE_NAME
         this->client_thread.join();
     }
 
-    tcp_session::tcp_session() : io_context{}, socket{io_context}, buffer{new char[buffer_size]}, read_size{0}, data{NULL}
+    tcp_session::tcp_session() : io_context{}, socket{io_context}, buffer{new char[buffer_size]}, read_size{0}, data{NULL}, closed{false}
     {
         memset(this->buffer.get(), 0, buffer_size);
     }
-    tcp_session::tcp_session(tcp::socket socket, std::shared_ptr<char[]> buf) : socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}
+    tcp_session::tcp_session(tcp::socket socket, std::shared_ptr<char[]> buf) : socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}
     {
     }
     void tcp_session::read(size_t size, read_handler on_read, void *p)
@@ -204,10 +210,16 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     void tcp_session::close()
     {
+        if (this->on_closed)
+        {
+            common::print_info("WARNING:the session already been closed before!");
+            return;
+        }
         if (on_closed)
         {
             on_closed(this);
         }
+        this->closed = true;
         this->socket.close();
     }
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
@@ -304,10 +316,6 @@ namespace GLOBAL_NAMESPACE_NAME
         std::promise<std::string> promise;
         session->write(
             buf.get(), buf_len, [buf, on_sent, &promise](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
-                if (error)
-                {
-                    session->close();
-                }
                 if ((completed || error))
                 {
                     if (on_sent)
@@ -333,10 +341,6 @@ namespace GLOBAL_NAMESPACE_NAME
         std::shared_ptr<std::promise<message>> promise{new std::promise<message>{}};
         _receive_size(session, size_ss, [on_read, session, promise](bool success, message &msg) {
             promise->set_value(msg);
-            if (!success)
-            {
-                session->close();
-            }
             if (on_read)
             {
                 on_read(success, msg);

@@ -31,6 +31,7 @@ namespace GLOBAL_NAMESPACE_NAME
         size_t read_size;
         size_t written_size;
         close_handler on_closed;
+        bool closed;
         tcp_session();
         tcp_session(tcp::socket socket, std::shared_ptr<char[]> buffer);
         void write(const char *data, size_t size, written_handler on_written, void *p);
