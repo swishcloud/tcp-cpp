@@ -14,11 +14,11 @@ void on_connect_success(XTCP::tcp_client *client)
     uuid = temp;
     common::print_debug(common::string_format("connect succeed"));
     client->session.write(
-        uuid.c_str(), uuid.size(), [](size_t written_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+        uuid.c_str(), uuid.size(), [](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
             assert(!error);
             if (error)
             {
-                common::print_debug(common::string_format("write failed:%s", error));
+                common::print_debug(common::string_format("write failed:%s", error.message()));
             }
             if (completed)
             {
@@ -28,7 +28,7 @@ void on_connect_success(XTCP::tcp_client *client)
         NULL);
     std::tuple<std::stringstream *, std::string> *tuple = new std::tuple<std::stringstream *, std::string>{new std::stringstream{}, uuid};
     client->session.read(
-        uuid.size(), [](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+        uuid.size(), [](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
             assert(!error);
             std::unique_ptr<char[]> read{common::strcpy(session->buffer.get(), read_size)};
             common::print_info(common::string_format("read message from server:%s", read.get()));
@@ -65,16 +65,15 @@ void run_client_thread()
 }
 void read_msg(XTCP::tcp_session *session)
 {
-    XTCP::message msg;
     common::print_info(common::string_format("reading client message"));
-    XTCP::read_message(session, msg, [session](bool success, XTCP::message &msg) {
-        common::print_info(common::string_format("reading client message %s", success ? "ok" : "failed"));
-        if (success)
+    XTCP::read_message(session, [session](common::error error, XTCP::message &msg) {
+        common::print_info(common::string_format("reading client message %s", !error ? "ok" : "failed"));
+        if (!error)
         {
             common::print_info(common::string_format("client message:%s", msg.to_json()));
-            XTCP::send_message(session, msg, [session](bool success) {
-                common::print_debug(common::string_format("Server send message %s", success ? "ok" : "failed"));
-                if (success)
+            XTCP::send_message(session, msg, [session](common::error error) {
+                common::print_debug(common::string_format("Server send message %s", error ? "failed" : "ok"));
+                if (!error)
                 {
                     read_msg(session);
                 }
@@ -92,7 +91,16 @@ void run_client_thread2()
         {
             XTCP::message msg;
             msg.body_size=i++;
-            XTCP::send_message(&client->session, msg, NULL);
+            /*XTCP::send_message(&client->session, msg, [](common::error error){
+                if(error){
+                    common::print_info(common::string_format("error sending message:%s",error.message()));
+                }
+            });*/
+            common::error error;
+              XTCP::send_message(&client->session, msg,error);
+             if(error){
+                    common::print_info(common::string_format("error sending message:%s",error.message()));
+                }
            // std::this_thread::sleep_for(std::chrono::seconds{10});
            //client->session.close();
            return;
@@ -112,10 +120,10 @@ void test_msg()
         tcp_server.listen();
     });
     run_client_thread2();
-    run_client_thread2();
-    run_client_thread2();
-    run_client_thread2();
-    run_client_thread2();
+    //run_client_thread2();
+    // run_client_thread2();
+    // run_client_thread2();
+    // run_client_thread2();
     common::pause();
 }
 int main(int argc, char *argv[])
@@ -126,12 +134,12 @@ int main(int argc, char *argv[])
             XTCP::tcp_server tcp_server(8080);
             tcp_server.on_accepted = [](XTCP::tcp_session *session, XTCP::tcp_server *server) {
                 session->read(
-                    3600, [](size_t read_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+                    3600, [](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                         auto server = (XTCP::tcp_server *)p;
                         auto read{common::strcpy(session->buffer.get(), read_size)};
                         //common::print_debug(common::string_format("read succed:%s", read.get()));
                         session->write(
-                            read, read_size, [](size_t written_size, XTCP::tcp_session *session, bool completed, const char *error, void *p) {
+                            read, read_size, [](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                                 auto _p = (char *)p;
                                 delete[] _p;
                             },
