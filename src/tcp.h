@@ -19,7 +19,6 @@ namespace GLOBAL_NAMESPACE_NAME
         typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> received_stream_handler;
         typedef std::function<void(tcp_session *session)> close_handler;
         bool set_expiration();
-        const int timeout = 20;
         void on_timeout(const boost::system::error_code &e);
 
     public:
@@ -36,6 +35,7 @@ namespace GLOBAL_NAMESPACE_NAME
         close_handler on_closed;
         bool closed;
         bool is_expired;
+        int timeout;
         tcp_session(boost::asio::io_context &io_context);
         tcp_session(boost::asio::io_context &io_context, tcp::socket socket);
         void write(const char *data, size_t size, written_handler on_written, void *p);
