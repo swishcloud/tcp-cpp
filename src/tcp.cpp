@@ -161,7 +161,6 @@ namespace GLOBAL_NAMESPACE_NAME
         if (this->timer.expires_from_now(boost::posix_time::seconds(timeout)) > 0)
         {
             this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
-            common::print_debug("expiration time changed.");
             return true;
         }
         common::print_debug("failed to change expiration time.");
@@ -247,17 +246,14 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     void tcp_session::receive_stream(std::shared_ptr<std::ostream> fs, size_t size, received_stream_handler on_received_stream, void *p)
     {
-        std::shared_ptr<int> written{new int{}};
         this->read(
-            size, [written, size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
-                *written += read_size;
+            size, [size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 fs->write(session->buffer.get(), read_size);
                 if (!(fs.get()))
                 {
                     on_received_stream(read_size, session, false, "Writing failed.", p);
                     return;
                 }
-                common::print_debug(common::string_format("read %d/%d bytes file content from upstream", *written.get(), size));
                 on_received_stream(read_size, session, completed, error, p);
             },
             NULL);
@@ -375,6 +371,15 @@ namespace GLOBAL_NAMESPACE_NAME
         _receive_size(session, size_ss, [on_read, session](common::error error, message &msg) {
             on_read(error, msg);
         });
+    }
+    void read_message(XTCP::tcp_session *session, message &msg, common::error &error)
+    {
+        std::promise<common::error> promise;
+        read_message(session, [&msg, &promise](common::error error, message &_msg) {
+            msg = _msg;
+            promise.set_value(error);
+        });
+        error = promise.get_future().get();
     }
     void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(common::error error, message &msg)> on_read)
     {

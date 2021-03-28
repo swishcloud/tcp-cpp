@@ -144,5 +144,6 @@ namespace GLOBAL_NAMESPACE_NAME
     void send_message(XTCP::tcp_session *session, message &msg, std::function<void(common::error error)> on_sent);
     void send_message(XTCP::tcp_session *session, message &msg, common::error &error);
     void read_message(XTCP::tcp_session *session, std::function<void(common::error error, message &msg)> on_read);
+    void read_message(XTCP::tcp_session *session, message &msg, common::error &error);
 };
 #endif
