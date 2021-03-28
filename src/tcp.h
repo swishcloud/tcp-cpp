@@ -64,6 +64,7 @@ namespace GLOBAL_NAMESPACE_NAME
         void listen();
         void add_session(tcp_session *);
         void remove_session(tcp_session *);
+        void shutdown();
     };
 
     class tcp_client

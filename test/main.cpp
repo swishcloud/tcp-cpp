@@ -1,5 +1,6 @@
 #include <iostream>
 #include <tcp.h>
+#include <fstream>
 void read_some(XTCP::tcp_session *session, int size)
 {
 }
@@ -126,6 +127,89 @@ void test_msg()
     // run_client_thread2();
     common::pause();
 }
+void test_stream()
+{
+    std::string source_path = "/media/debian/14BEDD23BEDCFDE4/Users/bigyasuo/Downloads/debian-10.7.0-amd64-netinst.iso";
+    //std::string dest_path = "/media/debian/14BEDD23BEDCFDE4/test-123456.vmdk";
+    std::string dest_path = "/home/debian/Desktop/test-123456.vmdk";
+    size_t file_size = common::file_size(source_path);
+    std::string md5 = common::file_md5(source_path.c_str());
+    XTCP::tcp_server tcp_server(8080);
+    std::thread server_th = std::thread([&tcp_server, md5, dest_path, file_size]() {
+        tcp_server.on_accepted = [dest_path, md5, file_size](XTCP::tcp_session *session, XTCP::tcp_server *server) {
+            common::print_debug("accepted a connection");
+            std::shared_ptr<std::ofstream> out{new std::ofstream{dest_path, std::ios_base::binary}};
+            if (out->bad())
+            {
+                common::print_info(common::string_format("failed to create a file named %s", dest_path.c_str()));
+                return;
+            }
+            session->receive_stream(
+                out, file_size, [out, md5, dest_path](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+                    if (error)
+                    {
+                        common::print_info(common::string_format("Error:%s", error.message()));
+                    }
+                    if (completed)
+                    {
+                        out->flush();
+                        out->close();
+                        common::print_info(common::string_format("%s    %s", md5.c_str(), common::file_md5(dest_path.c_str()).c_str()));
+                        if (!common::compare_md5(common::file_md5(dest_path.c_str()).c_str(), md5.c_str()))
+                        {
+                            common::print_info(common::string_format("MD5 error"));
+                            return;
+                        }
+                        common::print_info(common::string_format("received a stream successfully:%s", error.message()));
+                        XTCP::message msg;
+                        msg.msg_type = 1;
+                        XTCP::send_message(session, msg, [](common::error error) {
+                            common::print_info(common::string_format("%s", error ? "FAILED" : "OK"));
+                        });
+                    }
+                },
+                NULL);
+        };
+        tcp_server.listen();
+    });
+
+    //client
+    XTCP::tcp_client *client = new XTCP::tcp_client{};
+    client->on_connect_success = [source_path](XTCP::tcp_client *client) {
+        new std::thread{[source_path, client]() {
+            std::shared_ptr<std::istream> in{new std::ifstream{source_path, std::ios_base::binary}};
+            if (!*in)
+            {
+                common::print_info(common::string_format("failed to open a file named %s", source_path.c_str()));
+                return;
+            }
+            client->session.send_stream(
+                in, [](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+                    if (error)
+                    {
+                        common::print_info(common::string_format("Error:%s", error.message()));
+                    }
+                    if (completed)
+                    {
+                        common::print_info(common::string_format("send a stream successfully:%s", error.message()));
+                    }
+                },
+                NULL);
+        }};
+    };
+    //client.on_connect_fail = on_connect_fail;
+    client->start("127.0.0.1", "8080");
+    XTCP::message msg;
+    common::error err;
+    XTCP::read_message(&client->session, msg, err);
+    if (err || msg.msg_type != 1)
+    {
+        common::print_info("Test failed.");
+    }
+    tcp_server.shutdown();
+    server_th.join();
+    common::print_info("Test OK.");
+}
 int main(int argc, char *argv[])
 {
     if (std::string(argv[1]) == "server")
@@ -161,6 +245,10 @@ int main(int argc, char *argv[])
     else if (std::string(argv[1]) == "test_msg")
     {
         test_msg();
+    }
+    else if (std::string(argv[1]) == "test_stream")
+    {
+        test_stream();
     }
     else
     {

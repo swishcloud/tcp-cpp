@@ -6,8 +6,8 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     tcp_server::~tcp_server()
     {
-        common::print_debug(common::string_format("waiting heartbeat thread to exit..."));
-        this->heartbeat_thread.join();
+        //common::print_debug(common::string_format("waiting heartbeat thread to exit..."));
+        //this->heartbeat_thread.join();
     }
     void tcp_server::accecpt(tcp::acceptor &acceptor)
     {
@@ -96,6 +96,11 @@ namespace GLOBAL_NAMESPACE_NAME
             }
         }
         common::print_debug(common::string_format("sustained session count:%d", this->sessions.size()));
+    }
+    void tcp_server::shutdown()
+    {
+        this->io_context.stop();
+        this->heartbeat_thread.join();
     }
     //begin tcp_client
     void tcp_client::start(std::string server_ip, std::string server_port)
@@ -188,24 +193,27 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::read(size_t size, read_handler on_read, void *p)
     {
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
+            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                                                                     : NULL,
+                    p);
             if (!error)
             {
                 this->set_expiration();
                 time(&this->last_read_timer);
                 this->read_size += bytes_transferred;
-                if (size > bytes_transferred)
+                if (size != bytes_transferred)
                 {
                     this->read(size - bytes_transferred, on_read, p);
                 }
             }
-            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                     : NULL,
-                    p);
         });
     }
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
     {
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
+            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                                                                        : NULL,
+                       p);
             if (!error)
             {
                 this->set_expiration();
@@ -214,12 +222,8 @@ namespace GLOBAL_NAMESPACE_NAME
                 if (size != bytes_transferred)
                 {
                     this->write(data + bytes_transferred, size - bytes_transferred, on_written, p);
-                    return;
                 }
             }
-            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                        : NULL,
-                       p);
         });
     }
     void tcp_session::send_stream(std::shared_ptr<std::istream> fs, sent_stream_handler on_sent_stream, void *p)
@@ -227,7 +231,7 @@ namespace GLOBAL_NAMESPACE_NAME
         static const int BUFFER_SIZE = 1 * 1024 * 1024;
         std::shared_ptr<char[]> buf{new char[BUFFER_SIZE]};
         fs->read(buf.get(), BUFFER_SIZE);
-        if (fs->rdstate() & (std::ios_base::badbit)) //failed to read bytes
+        if (fs->rdstate() & (std::ios_base::badbit))
         {
             throw common::exception("failed to read bytes");
         }
