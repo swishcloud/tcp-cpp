@@ -197,6 +197,7 @@ void test_stream()
                 NULL);
         }};
     };
+     std::this_thread::sleep_for(std::chrono::seconds{3});
     //client.on_connect_fail = on_connect_fail;
     client->start("127.0.0.1", "8080");
     XTCP::message msg;
@@ -205,6 +206,7 @@ void test_stream()
     if (err || msg.msg_type != 1)
     {
         common::print_info("Test failed.");
+        common::print_info(err.message());
     }
     tcp_server.shutdown();
     server_th.join();

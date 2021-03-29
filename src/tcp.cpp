@@ -185,7 +185,7 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         memset(this->buffer.get(), 0, buffer_size);
     }
-    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{60}
+    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{20}
     {
         this->timer.expires_from_now(boost::posix_time::seconds(timeout));
         this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
@@ -417,22 +417,25 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         tcp_session->read(
             size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
-                std::unique_ptr<char[]> msg_content = std::unique_ptr<char[]>{common::strcpy(session->buffer.get(), read_size)};
-                *msg_ss << msg_content.get();
-
+                message msg;
+                msg_ss->write(session->buffer.get(), read_size);
+                if (!msg_ss)
+                {
+                    on_read(common::string_format("!!!FAILED TO WRITE TO STRINGSTREAM"), msg);
+                    return;
+                }
                 if (completed)
                 {
                     common::print_debug(common::string_format("read message:%s", msg_ss->str().c_str()));
-                }
-                message msg;
-                try
-                {
-                    msg = message::parse(msg_content.get());
-                }
-                catch (const std::exception &e)
-                {
-                    on_read(common::string_format("error reading message:%s", e.what()), msg);
-                    return;
+                    try
+                    {
+                        msg = message::parse(msg_ss->str());
+                    }
+                    catch (const std::exception &e)
+                    {
+                        on_read(common::string_format("error reading message:%s", e.what()), msg);
+                        return;
+                    }
                 }
 
                 if (error || completed)
