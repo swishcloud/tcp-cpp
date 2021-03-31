@@ -273,6 +273,7 @@ namespace GLOBAL_NAMESPACE_NAME
         {
             on_closed(this);
         }
+        this->timer.cancel();
         this->closed = true;
         this->socket.close();
     }
