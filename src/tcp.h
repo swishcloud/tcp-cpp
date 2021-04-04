@@ -18,21 +18,21 @@ namespace GLOBAL_NAMESPACE_NAME
         typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> sent_stream_handler;
         typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> received_stream_handler;
         typedef std::function<void(tcp_session *session)> close_handler;
-        bool set_expiration();
-        void on_timeout(const boost::system::error_code &e);
-
-    public:
-        boost::asio::io_context &io_context;
         boost::asio::deadline_timer timer;
-        tcp::socket socket;
+        boost::asio::io_context &io_context;
         void *data;
         constexpr static int buffer_size = 1024 * 1024 * 1;
-        std::unique_ptr<char[]> buffer;
         time_t last_read_timer;
         time_t last_write_timer;
         size_t read_size;
         size_t written_size;
+        bool set_expiration();
+        void on_timeout(const boost::system::error_code &e);
+
+    public:
+        std::unique_ptr<char[]> buffer;
         close_handler on_closed;
+        tcp::socket socket;
         bool closed;
         bool is_expired;
         int timeout;

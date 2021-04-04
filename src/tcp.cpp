@@ -110,9 +110,9 @@ namespace GLOBAL_NAMESPACE_NAME
             tcp::resolver r(io_context);
             this->endpoints = r.resolve(server_ip, server_port);
             this->connect(endpoints.begin());
-            auto work = boost::asio::require(session.io_context.get_executor(), boost::asio::execution::outstanding_work.tracked);
+            auto work = boost::asio::require(io_context.get_executor(), boost::asio::execution::outstanding_work.tracked);
             this->client_thread = std::thread([this, work]() {
-                this->session.io_context.run();
+                io_context.run();
                 common::print_debug("A tcp_client thread terminated.");
             });
         }
@@ -156,8 +156,8 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     tcp_client::~tcp_client()
     {
-        this->session.socket.close();
-        this->session.io_context.stop();
+        this->session.close();
+        this->io_context.stop();
         this->client_thread.join();
     }
 
