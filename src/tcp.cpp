@@ -1,7 +1,7 @@
 #include <tcp.h>
 namespace GLOBAL_NAMESPACE_NAME
 {
-    tcp_server::tcp_server(short port) : port(port), accecption_times{0}, session_count_peak{0}
+    tcp_server::tcp_server(short port) : port(port), accecption_times{0}, session_count_peak{0}, end{false}
     {
     }
     tcp_server::~tcp_server()
@@ -37,23 +37,20 @@ namespace GLOBAL_NAMESPACE_NAME
         this->accecpt(acceptor);
         auto work = boost::asio::require(io_context.get_executor(), boost::asio::execution::outstanding_work.tracked);
         heartbeat_thread = std::thread([this]() {
-            // while (1)
-            // {
-            //     std::this_thread::sleep_for(std::chrono::seconds{1});
-            //     for (int i = 0; i < this->sessions.size(); i++)
-            //     {
-            //         /*auto session = this->sessions[i];
-            //         time_t timer;
-
-            //         time(&timer);
-            //         double seconds = difftime(timer, session->last_read_timer);
-            //         if (session->read_size > 0 && seconds > 20)
-            //         {
-            //             //remove this session
-            //             this->remove_session(i--);
-            //         }*/
-            //     }
-            // }
+            while (!end || this->sessions.size() > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds{1});
+                for (int i = 0; i < this->sessions.size(); i++)
+                {
+                    auto session = this->sessions[i];
+                    if (session->closed && session->_running_tasks == 0)
+                    {
+                        //remove this session
+                        this->remove_session(session);
+                        i--;
+                    }
+                }
+            }
         });
         std::vector<std::thread> threads;
         for (int i = 0; i <= 50; i++)
@@ -90,8 +87,8 @@ namespace GLOBAL_NAMESPACE_NAME
                     common::print_info("closing the un-closed session before releasing");
                     session->close();
                 }
-                delete session;
                 this->sessions.erase(this->sessions.begin() + i);
+                delete session;
                 common::print_info("server released a session");
             }
         }
@@ -99,6 +96,7 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     void tcp_server::shutdown()
     {
+        this->end = true;
         this->io_context.stop();
         this->heartbeat_thread.join();
     }
@@ -185,21 +183,22 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         memset(this->buffer.get(), 0, buffer_size);
     }
-    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{20}
+    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{20}, _running_tasks{0}
     {
         this->timer.expires_from_now(boost::posix_time::seconds(timeout));
         this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
     }
     void tcp_session::read(size_t size, read_handler on_read, void *p)
     {
+        this->increase_task_num();
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            common::error err{this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                           : NULL};
-            on_read(bytes_transferred, this, size == bytes_transferred, err,
+            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                                                                     : NULL,
                     p);
-            if (!err)
+            if (!error)
             {
-                this->set_expiration();
+                if (!closed)
+                    this->set_expiration();
                 time(&this->last_read_timer);
                 this->read_size += bytes_transferred;
                 if (size != bytes_transferred)
@@ -207,18 +206,20 @@ namespace GLOBAL_NAMESPACE_NAME
                     this->read(size - bytes_transferred, on_read, p);
                 }
             }
+            this->decrease_task_num();
         });
     }
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
     {
+        this->increase_task_num();
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            common::error err{this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                           : NULL};
-            on_written(bytes_transferred, this, size == bytes_transferred, err,
+            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                                                                        : NULL,
                        p);
-            if (!err)
+            if (!error)
             {
-                this->set_expiration();
+                if (!closed)
+                    this->set_expiration();
                 time(&this->last_write_timer);
                 this->written_size += bytes_transferred;
                 if (size != bytes_transferred)
@@ -226,6 +227,7 @@ namespace GLOBAL_NAMESPACE_NAME
                     this->write(data + bytes_transferred, size - bytes_transferred, on_written, p);
                 }
             }
+            this->decrease_task_num();
         });
     }
     void tcp_session::send_stream(std::shared_ptr<std::istream> fs, sent_stream_handler on_sent_stream, void *p)
@@ -239,10 +241,10 @@ namespace GLOBAL_NAMESPACE_NAME
         }
         int read_count = fs->gcount();
         this->write(
-            buf.get(), read_count, [this, fs, on_sent_stream, buf](size_t written_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+            buf.get(), read_count, [this, fs, on_sent_stream, buf](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 bool eof = fs->rdstate() & (std::ios_base::eofbit);
                 on_sent_stream(written_size, session, eof, error, p);
-                if (!error && completed)
+                if (completed)
                 {
                     if (!eof)
                         send_stream(fs, on_sent_stream, p);
@@ -253,7 +255,7 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::receive_stream(std::shared_ptr<std::ostream> fs, size_t size, received_stream_handler on_received_stream, void *p)
     {
         this->read(
-            size, [size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+            size, [size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 if (!error)
                 {
                     fs->write(session->buffer.get(), read_size);
@@ -281,6 +283,16 @@ namespace GLOBAL_NAMESPACE_NAME
         this->timer.cancel();
         this->closed = true;
         this->socket.close();
+    }
+    void tcp_session::increase_task_num()
+    {
+        std::lock_guard<std::mutex> guard(running_tasks_counter_mutex);
+        _running_tasks++;
+    }
+    void tcp_session::decrease_task_num()
+    {
+        std::lock_guard<std::mutex> guard(running_tasks_counter_mutex);
+        _running_tasks--;
     }
     void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(common::error error, message &msg)> on_read);
     void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(common::error error, message &msg)> on_read);
@@ -358,7 +370,7 @@ namespace GLOBAL_NAMESPACE_NAME
         memcpy(dest, json.get(), json_len);
 
         session->write(
-            buf.get(), buf_len, [buf, on_sent](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+            buf.get(), buf_len, [buf, on_sent](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 if ((completed || error))
                 {
                     on_sent(error);
@@ -394,7 +406,7 @@ namespace GLOBAL_NAMESPACE_NAME
     void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(common::error error, message &msg)> on_read)
     {
         tcp_session->read(
-            1, [on_read, size_ss](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+            1, [on_read, size_ss](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 if (error)
                 {
                     message msg;
@@ -422,13 +434,12 @@ namespace GLOBAL_NAMESPACE_NAME
     void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(common::error error, message &msg)> on_read)
     {
         tcp_session->read(
-            size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+            size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 message msg;
                 msg_ss->write(session->buffer.get(), read_size);
                 if (!msg_ss)
                 {
-                    error = "!!!FAILED TO WRITE TO STRINGSTREAM";
-                    on_read(error, msg);
+                    on_read("!!!FAILED TO WRITE TO STRINGSTREAM", msg);
                     return;
                 }
                 if (completed)
@@ -440,8 +451,7 @@ namespace GLOBAL_NAMESPACE_NAME
                     }
                     catch (const std::exception &e)
                     {
-                        error = common::string_format("error reading message:%s", e.what());
-                        on_read(error, msg);
+                        on_read(common::string_format("error reading message:%s", e.what()), msg);
                         return;
                     }
                 }

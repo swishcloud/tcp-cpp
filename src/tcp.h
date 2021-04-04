@@ -13,10 +13,10 @@ namespace GLOBAL_NAMESPACE_NAME
     class tcp_session
     {
     private:
-        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error &error, void *p)> written_handler;
-        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error &error, void *p)> read_handler;
-        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error &error, void *p)> sent_stream_handler;
-        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error &error, void *p)> received_stream_handler;
+        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> written_handler;
+        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> read_handler;
+        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> sent_stream_handler;
+        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error serror, void *p)> received_stream_handler;
         typedef std::function<void(tcp_session *session)> close_handler;
         boost::asio::deadline_timer timer;
         boost::asio::io_context &io_context;
@@ -26,6 +26,7 @@ namespace GLOBAL_NAMESPACE_NAME
         time_t last_write_timer;
         size_t read_size;
         size_t written_size;
+        std::mutex running_tasks_counter_mutex;
         bool set_expiration();
         void on_timeout(const boost::system::error_code &e);
 
@@ -36,6 +37,7 @@ namespace GLOBAL_NAMESPACE_NAME
         bool closed;
         bool is_expired;
         int timeout;
+        int _running_tasks;
         tcp_session(boost::asio::io_context &io_context);
         tcp_session(boost::asio::io_context &io_context, tcp::socket socket);
         void write(const char *data, size_t size, written_handler on_written, void *p);
@@ -43,6 +45,8 @@ namespace GLOBAL_NAMESPACE_NAME
         void send_stream(std::shared_ptr<std::istream> fs, sent_stream_handler on_sent_stream, void *p);
         void receive_stream(std::shared_ptr<std::ostream> fs, size_t size, received_stream_handler on_received_stream, void *p);
         void close();
+        void increase_task_num();
+        void decrease_task_num();
     };
 
     class tcp_server
@@ -53,6 +57,7 @@ namespace GLOBAL_NAMESPACE_NAME
         short port;
         size_t accecption_times;
         void accecpt(tcp::acceptor &acceptor);
+        bool end;
 
     public:
         std::function<void(tcp_session *session, tcp_server *server)> on_accepted;

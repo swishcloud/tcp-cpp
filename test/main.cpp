@@ -136,7 +136,7 @@ void test_stream()
     std::string md5 = common::file_md5(source_path.c_str());
     XTCP::tcp_server tcp_server(8080);
     std::thread server_th = std::thread([&tcp_server, md5, dest_path, file_size]() {
-        tcp_server.on_accepted = [dest_path, md5, file_size](XTCP::tcp_session *session, XTCP::tcp_server *server) {
+        tcp_server.on_accepted = [&tcp_server, dest_path, md5, file_size](XTCP::tcp_session *session, XTCP::tcp_server *server) {
             common::print_debug("accepted a connection");
             std::shared_ptr<std::ofstream> out{new std::ofstream{dest_path, std::ios_base::binary}};
             if (out->bad())
@@ -145,7 +145,7 @@ void test_stream()
                 return;
             }
             session->receive_stream(
-                out, file_size, [out, md5, dest_path](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+                out, file_size, [&tcp_server, out, md5, dest_path](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                     if (error)
                     {
                         common::print_info(common::string_format("Error:%s", error.message()));
@@ -163,8 +163,9 @@ void test_stream()
                         common::print_info(common::string_format("received a stream successfully:%s", error.message()));
                         XTCP::message msg;
                         msg.msg_type = 1;
-                        XTCP::send_message(session, msg, [](common::error error) {
+                        XTCP::send_message(session, msg, [&tcp_server, session](common::error error) {
                             common::print_info(common::string_format("%s", error ? "FAILED" : "OK"));
+                            session->close();
                         });
                     }
                 },
@@ -197,7 +198,7 @@ void test_stream()
                 NULL);
         }};
     };
-     std::this_thread::sleep_for(std::chrono::seconds{3});
+    std::this_thread::sleep_for(std::chrono::seconds{3});
     //client.on_connect_fail = on_connect_fail;
     client->start("127.0.0.1", "8080");
     XTCP::message msg;
