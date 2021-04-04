@@ -13,10 +13,10 @@ namespace GLOBAL_NAMESPACE_NAME
     class tcp_session
     {
     private:
-        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> written_handler;
-        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> read_handler;
-        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> sent_stream_handler;
-        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> received_stream_handler;
+        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error &error, void *p)> written_handler;
+        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error &error, void *p)> read_handler;
+        typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error &error, void *p)> sent_stream_handler;
+        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error &error, void *p)> received_stream_handler;
         typedef std::function<void(tcp_session *session)> close_handler;
         boost::asio::deadline_timer timer;
         boost::asio::io_context &io_context;

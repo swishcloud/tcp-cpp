@@ -193,10 +193,11 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::read(size_t size, read_handler on_read, void *p)
     {
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                     : NULL,
+            common::error err{this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                           : NULL};
+            on_read(bytes_transferred, this, size == bytes_transferred, err,
                     p);
-            if (!error)
+            if (!err)
             {
                 this->set_expiration();
                 time(&this->last_read_timer);
@@ -211,10 +212,11 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
     {
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                        : NULL,
+            common::error err{this->is_expired ? "session timeout" : error ? error.message().c_str()
+                                                                           : NULL};
+            on_written(bytes_transferred, this, size == bytes_transferred, err,
                        p);
-            if (!error)
+            if (!err)
             {
                 this->set_expiration();
                 time(&this->last_write_timer);
@@ -237,10 +239,10 @@ namespace GLOBAL_NAMESPACE_NAME
         }
         int read_count = fs->gcount();
         this->write(
-            buf.get(), read_count, [this, fs, on_sent_stream, buf](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+            buf.get(), read_count, [this, fs, on_sent_stream, buf](size_t written_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
                 bool eof = fs->rdstate() & (std::ios_base::eofbit);
                 on_sent_stream(written_size, session, eof, error, p);
-                if (completed)
+                if (!error && completed)
                 {
                     if (!eof)
                         send_stream(fs, on_sent_stream, p);
@@ -251,12 +253,15 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::receive_stream(std::shared_ptr<std::ostream> fs, size_t size, received_stream_handler on_received_stream, void *p)
     {
         this->read(
-            size, [size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
-                fs->write(session->buffer.get(), read_size);
-                if (!(fs.get()))
+            size, [size, fs, on_received_stream](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
+                if (!error)
                 {
-                    on_received_stream(read_size, session, false, "Writing failed.", p);
-                    return;
+                    fs->write(session->buffer.get(), read_size);
+                    if (!*fs)
+                    {
+                        completed = false;
+                        error = "Writing failed.";
+                    }
                 }
                 on_received_stream(read_size, session, completed, error, p);
             },
@@ -353,7 +358,7 @@ namespace GLOBAL_NAMESPACE_NAME
         memcpy(dest, json.get(), json_len);
 
         session->write(
-            buf.get(), buf_len, [buf, on_sent](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+            buf.get(), buf_len, [buf, on_sent](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
                 if ((completed || error))
                 {
                     on_sent(error);
@@ -389,7 +394,7 @@ namespace GLOBAL_NAMESPACE_NAME
     void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(common::error error, message &msg)> on_read)
     {
         tcp_session->read(
-            1, [on_read, size_ss](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+            1, [on_read, size_ss](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
                 if (error)
                 {
                     message msg;
@@ -417,12 +422,13 @@ namespace GLOBAL_NAMESPACE_NAME
     void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(common::error error, message &msg)> on_read)
     {
         tcp_session->read(
-            size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
+            size, [msg_ss, on_read](size_t read_size, XTCP::tcp_session *session, bool completed, common::error &error, void *p) {
                 message msg;
                 msg_ss->write(session->buffer.get(), read_size);
                 if (!msg_ss)
                 {
-                    on_read(common::string_format("!!!FAILED TO WRITE TO STRINGSTREAM"), msg);
+                    error = "!!!FAILED TO WRITE TO STRINGSTREAM";
+                    on_read(error, msg);
                     return;
                 }
                 if (completed)
@@ -434,7 +440,8 @@ namespace GLOBAL_NAMESPACE_NAME
                     }
                     catch (const std::exception &e)
                     {
-                        on_read(common::string_format("error reading message:%s", e.what()), msg);
+                        error = common::string_format("error reading message:%s", e.what());
+                        on_read(error, msg);
                         return;
                     }
                 }
