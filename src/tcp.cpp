@@ -40,7 +40,8 @@ namespace GLOBAL_NAMESPACE_NAME
             while (!end || this->sessions.size() > 0)
             {
                 std::this_thread::sleep_for(std::chrono::seconds{1});
-                for (int i = 0; i < this->sessions.size(); i++)
+                auto n = this->sessions.size();
+                for (int i = 0; i < n; i++)
                 {
                     auto session = this->sessions[i];
                     if (session->closed && session->_running_tasks == 0)
@@ -48,6 +49,7 @@ namespace GLOBAL_NAMESPACE_NAME
                         //remove this session
                         this->remove_session(session);
                         i--;
+                        n--;
                     }
                 }
             }
@@ -80,7 +82,7 @@ namespace GLOBAL_NAMESPACE_NAME
         for (int i = 0; i < this->sessions.size(); i++)
         {
             auto session = this->sessions[i];
-            if (session = s)
+            if (session == s)
             {
                 if (!session->closed)
                 {
@@ -90,6 +92,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 this->sessions.erase(this->sessions.begin() + i);
                 delete session;
                 common::print_info("server released a session");
+                break;
             }
         }
         common::print_debug(common::string_format("sustained session count:%d", this->sessions.size()));
@@ -439,6 +442,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 msg_ss->write(session->buffer.get(), read_size);
                 if (!msg_ss)
                 {
+                    session->close();
                     on_read("!!!FAILED TO WRITE TO STRINGSTREAM", msg);
                     return;
                 }
