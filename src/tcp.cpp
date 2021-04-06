@@ -246,7 +246,7 @@ namespace GLOBAL_NAMESPACE_NAME
         this->write(
             buf.get(), read_count, [this, fs, on_sent_stream, buf](size_t written_size, XTCP::tcp_session *session, bool completed, common::error error, void *p) {
                 bool eof = fs->rdstate() & (std::ios_base::eofbit);
-                on_sent_stream(written_size, session, eof, error, p);
+                on_sent_stream(written_size, session, completed && eof, error, p);
                 if (completed)
                 {
                     if (!eof)
