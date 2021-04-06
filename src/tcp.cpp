@@ -195,12 +195,12 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         this->increase_task_num();
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                     : NULL,
+            on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired && error ? "session timeout" : error ? error.message().c_str()
+                                                                                                                              : NULL,
                     p);
             if (!error)
             {
-                if (!closed)
+                if (!closed) //the timer is canceled if the session has closed, not set expiration again.
                     this->set_expiration();
                 time(&this->last_read_timer);
                 this->read_size += bytes_transferred;
@@ -216,12 +216,12 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         this->increase_task_num();
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred) {
-            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired ? "session timeout" : error ? error.message().c_str()
-                                                                                                                        : NULL,
+            on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired && error ? "session timeout" : error ? error.message().c_str()
+                                                                                                                                 : NULL,
                        p);
             if (!error)
             {
-                if (!closed)
+                if (!closed) //the timer is canceled if the session has closed, not set expiration again.
                     this->set_expiration();
                 time(&this->last_write_timer);
                 this->written_size += bytes_transferred;
