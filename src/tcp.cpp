@@ -6,8 +6,9 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     tcp_server::~tcp_server()
     {
-        //common::print_debug(common::string_format("waiting heartbeat thread to exit..."));
-        //this->heartbeat_thread.join();
+        common::print_debug(common::string_format("releasing server object."));
+        // common::print_debug(common::string_format("waiting heartbeat thread to exit..."));
+        // this->heartbeat_thread.join();
     }
     void tcp_server::accecpt(tcp::acceptor &acceptor)
     {
@@ -38,6 +39,7 @@ namespace GLOBAL_NAMESPACE_NAME
         boost::system::error_code ec;
         auto endpoint = tcp::endpoint(boost::asio::ip::address::from_string("0.0.0.0"), port);
         acceptor.open(endpoint.protocol(), ec);
+        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         if (ec)
         {
             common::print_info(ec.message());
@@ -89,8 +91,7 @@ namespace GLOBAL_NAMESPACE_NAME
                                                    this->sessions.clear();
                                                    break;
                                                }
-                                           }
-                                       });
+                                           } });
         std::vector<std::thread> threads;
         for (int i = 0; i <= 50; i++)
         {
@@ -147,10 +148,20 @@ namespace GLOBAL_NAMESPACE_NAME
         common::print_debug("shutdowning server...");
         this->end = true;
         this->io_context.stop();
-        this->heartbeat_thread.join();
+        if (this->heartbeat_thread.joinable())
+            this->heartbeat_thread.join();
+        common::print_debug("server shutdownded!!!");
     }
-    //begin tcp_client
+    short tcp_server::get_port()
+    {
+        return this->port;
+    }
+    // begin tcp_client
     void tcp_client::start(std::string server_ip, std::string server_port)
+    {
+        start(server_ip, server_port, 3);
+    }
+    void tcp_client::start(std::string server_ip, std::string server_port, int thread_count)
     {
         try
         {
@@ -159,14 +170,13 @@ namespace GLOBAL_NAMESPACE_NAME
             this->connect(endpoints.begin());
             auto work = boost::asio::require(io_context.get_executor(), boost::asio::execution::outstanding_work.tracked);
             std::vector<std::thread> threads;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < thread_count; i++)
             {
                 threads.push_back(std::move(std::thread([this, i]()
                                                         {
                                                             io_context.run();
                                                             common::print_info(common::string_format("tcp client thread %d exited", i));
-                                                            ;
-                                                        })));
+                                                            ; })));
             }
             for (auto &t : threads)
             {
@@ -208,31 +218,35 @@ namespace GLOBAL_NAMESPACE_NAME
             connect(++endpoint_iter);
             return;
         }
-        //connection suceess
+        // connection suceess
         connected = true;
         if (this->on_connect_success)
             on_connect_success(this);
     }
     tcp_client::tcp_client() : connected{false}, session{io_context}
     {
+        session.on_closed.subscribe([this](tcp_session *session)
+                                    { this->shutdown(); });
     }
     tcp_client::~tcp_client()
     {
     }
     void tcp_client::shutdown()
     {
+        if (!this->session.closed)
+        {
+            this->session.close();
+        }
         this->io_context.stop();
     }
-    bool tcp_session::set_expiration()
+    void tcp_session::set_expiration()
     {
-        if (this->timer.expires_from_now(boost::posix_time::seconds(timeout)) > 0)
+        std::lock_guard<std::mutex> guard(timer_mutex);
+        if (this->timer.expires_from_now(boost::posix_time::seconds(timeout)) < 1)
         {
-            this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
-            return true;
+            common::print_debug("set_expiration failed");
         }
-        common::print_debug("failed to change expiration time.");
-        //this session is already time out, can no longer be used.
-        return false;
+        this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
     }
     void tcp_session::on_timeout(const boost::system::error_code &e)
     {
@@ -245,25 +259,22 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     tcp_session::tcp_session(boost::asio::io_context &io_context) : tcp_session{io_context, tcp::socket{io_context}}
     {
-        memset(this->buffer.get(), 0, buffer_size);
     }
-    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{20}, _running_tasks{0}
+    tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{TCP_SESSION_TIMEOUT}, _running_tasks{0}
     {
         this->timer.expires_from_now(boost::posix_time::seconds(timeout));
         this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
+        memset(this->buffer.get(), 0, buffer_size);
     }
     void tcp_session::read(size_t size, read_handler on_read, void *p)
     {
         this->increase_task_num();
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred)
                                      {
-                                         on_read(bytes_transferred, this, size == bytes_transferred, this->is_expired && error ? "session timeout" : error ? error.message().c_str()
-                                                                                                                                                           : NULL,
-                                                 p);
+                                         on_read(bytes_transferred, this, size == bytes_transferred, error?error.message():std::string{},p); 
                                          if (!error)
                                          {
-                                             if (!closed) //the timer is canceled if the session has closed, not set expiration again.
-                                                 this->set_expiration();
+                                             this->set_expiration();
                                              time(&this->last_read_timer);
                                              this->read_size += bytes_transferred;
                                              if (size != bytes_transferred)
@@ -271,21 +282,21 @@ namespace GLOBAL_NAMESPACE_NAME
                                                  this->read(size - bytes_transferred, on_read, p);
                                              }
                                          }
-                                         this->decrease_task_num();
-                                     });
+                                         else
+                                         {
+                                             this->close();
+                                         }
+                                         this->decrease_task_num(); });
     }
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
     {
         this->increase_task_num();
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred)
                                       {
-                                          on_written(bytes_transferred, this, size == bytes_transferred, this->is_expired && error ? "session timeout" : error ? error.message().c_str()
-                                                                                                                                                               : NULL,
-                                                     p);
+                                          on_written(bytes_transferred, this, size == bytes_transferred,error?error.message():std::string{}, p);
                                           if (!error)
                                           {
-                                              if (!closed) //the timer is canceled if the session has closed, not set expiration again.
-                                                  this->set_expiration();
+                                             this->set_expiration();
                                               time(&this->last_write_timer);
                                               this->written_size += bytes_transferred;
                                               if (size != bytes_transferred)
@@ -293,8 +304,11 @@ namespace GLOBAL_NAMESPACE_NAME
                                                   this->write(data + bytes_transferred, size - bytes_transferred, on_written, p);
                                               }
                                           }
-                                          this->decrease_task_num();
-                                      });
+                                          else
+                                          {
+                                              this->close();
+                                          }
+                                          this->decrease_task_num(); });
     }
     void tcp_session::send_stream(std::shared_ptr<std::istream> fs, sent_stream_handler on_sent_stream, void *p)
     {
@@ -315,8 +329,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 {
                     if (!eof)
                         send_stream(fs, on_sent_stream, p);
-                }
-            },
+                } },
             NULL);
     }
     void tcp_session::receive_stream(std::shared_ptr<std::ostream> fs, size_t size, received_stream_handler on_received_stream, void *p)
@@ -333,8 +346,7 @@ namespace GLOBAL_NAMESPACE_NAME
                         error = "Writing failed.";
                     }
                 }
-                on_received_stream(read_size, session, completed, error, p);
-            },
+                on_received_stream(read_size, session, completed, error, p); },
             NULL);
     }
     void tcp_session::close()
@@ -347,10 +359,7 @@ namespace GLOBAL_NAMESPACE_NAME
         this->timer.cancel();
         this->closed = true;
         this->socket.close();
-        if (on_closed)
-        {
-            on_closed(this);
-        }
+        on_closed(this);
     }
     void tcp_session::increase_task_num()
     {
@@ -447,8 +456,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 if ((completed || error))
                 {
                     on_sent(error);
-                }
-            },
+                } },
             NULL);
     }
     void send_message(XTCP::tcp_session *session, message &msg, common::error &error)
@@ -471,8 +479,7 @@ namespace GLOBAL_NAMESPACE_NAME
         read_message(session, [&msg, &promise](common::error error, message &_msg)
                      {
                          msg = _msg;
-                         promise.set_value(error);
-                     });
+                         promise.set_value(error); });
         error = promise.get_future().get();
     }
     void _receive_size(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> size_ss, std::function<void(common::error error, message &msg)> on_read)
@@ -500,8 +507,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 {
                     assert(completed); //just one byte.
                     _receive_size(session, size_ss, on_read);
-                }
-            },
+                } },
             NULL);
     }
     void _receive_message(XTCP::tcp_session *tcp_session, std::shared_ptr<std::stringstream> msg_ss, size_t size, std::function<void(common::error error, message &msg)> on_read)
@@ -538,8 +544,7 @@ namespace GLOBAL_NAMESPACE_NAME
                 else
                 {
                     on_read("Fatal ERROR", msg);
-                }
-            },
+                } },
             NULL);
     }
 };

@@ -6,6 +6,7 @@
 #include <boost/bind/bind.hpp>
 #include <common.h>
 #include <nlohmann/json.hpp>
+#define TCP_SESSION_TIMEOUT 20
 using namespace nlohmann;
 using boost::asio::ip::tcp;
 namespace GLOBAL_NAMESPACE_NAME
@@ -16,9 +17,10 @@ namespace GLOBAL_NAMESPACE_NAME
         typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> written_handler;
         typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> read_handler;
         typedef std::function<void(size_t written_size, tcp_session *session, bool completed, common::error error, void *p)> sent_stream_handler;
-        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error serror, void *p)> received_stream_handler;
+        typedef std::function<void(size_t read_size, tcp_session *session, bool completed, common::error error, void *p)> received_stream_handler;
         typedef std::function<void(tcp_session *session)> close_handler;
         boost::asio::deadline_timer timer;
+        std::mutex timer_mutex;
         boost::asio::io_context &io_context;
         void *data;
         constexpr static int buffer_size = 1024 * 1024 * 1;
@@ -27,12 +29,12 @@ namespace GLOBAL_NAMESPACE_NAME
         size_t read_size;
         size_t written_size;
         std::mutex running_tasks_counter_mutex;
-        bool set_expiration();
+        void set_expiration();
         void on_timeout(const boost::system::error_code &e);
 
     public:
         std::unique_ptr<char[]> buffer;
-        close_handler on_closed;
+        EventBundle<close_handler> on_closed;
         tcp::socket socket;
         bool closed;
         bool is_expired;
@@ -72,6 +74,7 @@ namespace GLOBAL_NAMESPACE_NAME
         void add_session(tcp_session *);
         void remove_session(tcp_session *);
         void shutdown();
+        short get_port();
     };
 
     class tcp_client
@@ -89,6 +92,7 @@ namespace GLOBAL_NAMESPACE_NAME
         disconnected_handler on_disconnected;
         tcp_session session;
         bool connected;
+        void start(std::string server_ip, std::string server_port, int thread_count);
         void start(std::string server_ip, std::string server_port);
         void connect(tcp::resolver::results_type::iterator endpoint_iter);
         void handle_connect(const boost::system::error_code &error, tcp::resolver::results_type::iterator endpoint_iter);
@@ -128,8 +132,8 @@ namespace GLOBAL_NAMESPACE_NAME
         std::vector<message_header> headers{};
 
     public:
-        //message();
-        //message(message &&msg);
+        // message();
+        // message(message &&msg);
         int msg_type{0};
         size_t body_size{0};
         std::shared_ptr<std::vector<char>> to_json() const;
