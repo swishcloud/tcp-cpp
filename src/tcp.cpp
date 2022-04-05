@@ -7,8 +7,12 @@ namespace GLOBAL_NAMESPACE_NAME
     tcp_server::~tcp_server()
     {
         common::print_debug(common::string_format("releasing server object."));
-        // common::print_debug(common::string_format("waiting heartbeat thread to exit..."));
-        // this->heartbeat_thread.join();
+        for (auto s : sessions)
+        {
+            s->close();
+            common::print_info("released a session during server finishing");
+            delete s;
+        }
     }
     void tcp_server::accecpt(tcp::acceptor &acceptor)
     {
@@ -59,39 +63,6 @@ namespace GLOBAL_NAMESPACE_NAME
         }
         this->accecpt(acceptor);
         auto work = boost::asio::require(io_context.get_executor(), boost::asio::execution::outstanding_work.tracked);
-        heartbeat_thread = std::thread([this]()
-                                       {
-                                           while (true)
-                                           {
-                                               if (!end)
-                                               {
-                                                   std::this_thread::sleep_for(std::chrono::seconds{1});
-                                                   auto n = this->sessions.size();
-                                                   for (int i = 0; i < n; i++)
-                                                   {
-                                                       auto session = this->sessions[i];
-                                                       if (session->closed && session->_running_tasks == 0)
-                                                       {
-                                                           //remove this session
-                                                           this->remove_session(session);
-                                                           i--;
-                                                           n--;
-                                                       }
-                                                   }
-                                               }
-                                               else
-                                               {
-                                                   //end is ture, then clear all sessions
-                                                   for (auto s : sessions)
-                                                   {
-                                                       s->close();
-                                                       common::print_info("released a session during server finishing");
-                                                       delete s;
-                                                   }
-                                                   this->sessions.clear();
-                                                   break;
-                                               }
-                                           } });
         std::vector<std::thread> threads;
         for (int i = 0; i <= 50; i++)
         {
