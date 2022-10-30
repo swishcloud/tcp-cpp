@@ -239,6 +239,10 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     void tcp_session::read(size_t size, read_handler on_read, void *p)
     {
+        if (this->closed)
+        {
+            on_read(0, this, false, "session closed", p);
+        }
         this->increase_task_num();
         this->socket.async_read_some(boost::asio::buffer(buffer.get(), size > buffer_size ? buffer_size : size), [this, size, on_read, p](const boost::system::error_code &error, std::size_t bytes_transferred)
                                      {
@@ -261,6 +265,10 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     void tcp_session::write(const char *data, size_t size, written_handler on_written, void *p)
     {
+        if (this->closed)
+        {
+            on_written(0, this, false, "session closed", p);
+        }
         this->increase_task_num();
         this->socket.async_write_some(boost::asio::buffer(data, size), [this, data, size, on_written, p](const boost::system::error_code &error, std::size_t bytes_transferred)
                                       {
