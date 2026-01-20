@@ -41,7 +41,7 @@ namespace GLOBAL_NAMESPACE_NAME
     {
         tcp::acceptor acceptor{io_context};
         boost::system::error_code ec;
-        auto endpoint = tcp::endpoint(boost::asio::ip::address::from_string("0.0.0.0"), port);
+        auto endpoint = tcp::endpoint(boost::asio::ip::make_address("0.0.0.0"), port);
         acceptor.open(endpoint.protocol(), ec);
         acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         if (ec)
@@ -55,7 +55,7 @@ namespace GLOBAL_NAMESPACE_NAME
             common::print_info(ec.message());
             return 1;
         }
-        acceptor.listen(tcp::socket::max_connections, ec);
+        acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
         if (ec)
         {
             common::print_info(ec.message());
@@ -213,7 +213,7 @@ namespace GLOBAL_NAMESPACE_NAME
     void tcp_session::set_expiration()
     {
         std::lock_guard<std::mutex> guard(timer_mutex);
-        if (this->timer.expires_from_now(boost::posix_time::seconds(timeout)) < 1)
+        if (this->timer.expires_after(std::chrono::seconds(timeout)) < 1)
         {
             common::print_debug("set_expiration failed");
         }
@@ -233,7 +233,7 @@ namespace GLOBAL_NAMESPACE_NAME
     }
     tcp_session::tcp_session(boost::asio::io_context &io_context, tcp::socket socket) : io_context{io_context}, timer{io_context}, socket{std::move(socket)}, buffer{new char[buffer_size]}, read_size{0}, closed{false}, is_expired{false}, timeout{TCP_SESSION_TIMEOUT}, _running_tasks{0}
     {
-        this->timer.expires_from_now(boost::posix_time::seconds(timeout));
+        this->timer.expires_after(std::chrono::seconds(timeout));
         this->timer.async_wait(boost::bind(&XTCP::tcp_session::on_timeout, this, boost::placeholders::_1));
         memset(this->buffer.get(), 0, buffer_size);
     }
